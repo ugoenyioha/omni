@@ -1,0 +1,280 @@
+# Sidero Omni Docker Compose for Arch Linux (Shirley)
+# Uses macvlan network with dedicated IP 192.168.1.8
+
+services:
+  # External etcd for persistent storage
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: omni-etcd
+    hostname: etcd.home.usableapps.io
+    restart: unless-stopped
+    networks:
+      omni-internal:
+        aliases:
+          - etcd.home.usableapps.io
+    environment:
+      - ETCD_NAME=omni-etcd
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LISTEN_CLIENT_URLS=https://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=https://etcd.home.usableapps.io:2379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER=omni-etcd=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_STATE=new
+      - ETCD_INITIAL_CLUSTER_TOKEN=omni-cluster
+      - ETCD_AUTO_COMPACTION_RETENTION=24h
+      - ETCD_AUTO_COMPACTION_MODE=periodic
+      # TLS Configuration using existing certs
+      - ETCD_CERT_FILE=/etc/ssl/server.crt
+      - ETCD_KEY_FILE=/etc/ssl/server.key
+      - ETCD_CLIENT_CERT_AUTH=false  # Don't require client certs
+    volumes:
+      - etcd-data:/etcd-data
+      - ssl-certs:/etc/ssl:ro
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=https://localhost:2379", "--cert=/etc/ssl/server.crt", "--key=/etc/ssl/server.key", "--insecure-skip-tls-verify", "endpoint", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  omni:
+    image: ghcr.io/siderolabs/omni:latest
+    container_name: sidero-omni
+    restart: unless-stopped
+    depends_on:
+      etcd:
+        condition: service_healthy
+    # ports:
+    #   - "192.168.1.8:50180:50180/udp"  # Wireguard not binding to port
+    networks:
+      - omni-internal
+    # S3 backup configuration removed - configure through Omni UI at Settings > Backup Storage
+    # This ensures configuration persists across reboots as it's stored in etcd
+    environment:
+      # Point to complete CA bundle with all certificates
+      - SSL_CERT_FILE=/custom-ca/full-ca-bundle.crt
+      - SSL_CERT_DIR=/etc/ssl/certs
+    volumes:
+      - omni-data:/var/lib/omni
+      - ./omni.asc:/omni.asc:ro
+      - ./matchbox/data:/var/lib/matchbox
+      - ssl-certs:/etc/ssl:ro  # For etcd client certs
+      - ./full-ca-bundle.crt:/custom-ca/full-ca-bundle.crt:ro  # Complete CA bundle
+      - ./omni-config.yaml:/etc/omni/config.yaml:ro  # Configuration with refresh tokens
+    command:
+      - --account-id=aa9f07e9-30de-465c-ac27-5f38136600bd
+      - --advertised-api-url=https://omni.home.usableapps.io/
+      - --advertised-kubernetes-proxy-url=https://omni-k8s.home.usableapps.io/
+      - --bind-addr=0.0.0.0:8080
+      - --k8s-proxy-bind-addr=0.0.0.0:8095
+      - --machine-api-bind-addr=0.0.0.0:8091
+      - --siderolink-wireguard-bind-addr=0.0.0.0:50180
+      - --auth-saml-enabled=true
+      - --auth-saml-url=https://wso2is.onprem.usableapps.io/identity/metadata/saml2
+      - --initial-users=ugo.enyioha@gmail.com
+      - --auth-saml-label-rules={"role":"Admin"}
+      # Use external etcd instead of embedded
+      - --etcd-embedded=false
+      - --etcd-endpoints=https://etcd.home.usableapps.io:2379
+      # Use the same certs for client auth (self-signed is ok for internal)
+      - --etcd-ca-path=/etc/ssl/server.crt
+      - --etcd-client-cert-path=/etc/ssl/server.crt
+      - --etcd-client-key-path=/etc/ssl/server.key
+      - --name=Arch Linux Omni
+      - --private-key-source=file:///omni.asc
+      - --siderolink-api-advertised-url=https://omni-siderolink.home.usableapps.io:443
+      - --siderolink-wireguard-advertised-addr=192.168.1.8:50180
+      # S3 Backup Configuration - enables S3 backup feature
+      # Actual S3 credentials must be configured via Omni UI: Settings > Backup Storage
+      - --etcd-backup-s3
+      - --etcd-backup-min-interval=1h
+      - --etcd-backup-max-interval=24h
+    privileged: true  # Required for wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    healthcheck:
+      test: ["CMD", "/healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"  # Critical service - manual updates only
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    container_name: omni-nginx
+    restart: unless-stopped
+    # Ports handled through macvlan network directly
+    networks:
+      omni-macvlan:
+        ipv4_address: 192.168.1.8
+      omni-internal:
+    volumes:
+      - ./nginx/omni.conf:/etc/nginx/conf.d/default.conf:ro
+      - ssl-certs:/etc/nginx/ssl:ro
+    depends_on:
+      - omni
+      - letsencrypt-cert-manager
+    privileged: true  # Required for UDP transparent proxy
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  nginx-reloader:
+    build:
+      context: .
+      dockerfile: nginx-reloader/Dockerfile
+    container_name: nginx-reloader
+    restart: unless-stopped
+    networks:
+      - omni-internal
+    volumes:
+      - ssl-certs:/etc/nginx/ssl:ro
+    pid: "service:nginx"  # Share PID namespace with nginx
+    depends_on:
+      - nginx
+      - letsencrypt-cert-manager
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "inotifywait"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  letsencrypt-cert-manager:
+    build:
+      context: ./letsencrypt-cert-manager
+      dockerfile: Dockerfile
+    container_name: letsencrypt-cert-manager
+    restart: unless-stopped
+    networks:
+      - omni-internal
+    environment:
+      - CERT_DIR=/etc/nginx/ssl
+      - CERT_COMMON_NAME=*.home.usableapps.io
+      - CERT_ALT_NAMES=*.home.usableapps.io,*.usableapps.io,usableapps.io
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-admin@home.usableapps.io}
+      - LETSENCRYPT_STAGING=${LETSENCRYPT_STAGING:-false}
+      - RENEW_BEFORE_DAYS=${RENEW_BEFORE_DAYS:-30}
+      # Cloudflare API credentials (use API Token OR Email+Key)
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:-}  # Recommended: scoped API token
+      - CLOUDFLARE_EMAIL=${CLOUDFLARE_EMAIL:-}          # Legacy: account email
+      - CLOUDFLARE_API_KEY=${CLOUDFLARE_API_KEY:-}      # Legacy: global API key
+    volumes:
+      - ssl-certs:/etc/nginx/ssl
+      - letsencrypt-data:/etc/letsencrypt
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -f /etc/nginx/ssl/server.crt && test -f /etc/nginx/ssl/server.key"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  matchbox:
+    image: quay.io/poseidon/matchbox:v0.11.0
+    container_name: matchbox
+    restart: unless-stopped
+    networks:
+      - omni-internal
+    volumes:
+      - ./matchbox/etc:/etc/matchbox:ro
+      - ./matchbox/data:/var/lib/matchbox
+    environment:
+      - MATCHBOX_ADDRESS=0.0.0.0:8088
+      - MATCHBOX_RPC_ADDRESS=0.0.0.0:8081
+      - MATCHBOX_LOG_LEVEL=debug
+    healthcheck:
+      test: ["CMD", "nc", "-zv", "localhost", "8088"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    command:
+      - -address=0.0.0.0:8088
+      - -rpc-address=0.0.0.0:8081
+      - -log-level=debug
+      - -assets-path=/var/lib/matchbox/assets
+      - -cert-file=/etc/matchbox/server.crt
+      - -key-file=/etc/matchbox/server.key
+      - -ca-file=/etc/matchbox/ca.crt
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    networks:
+      - omni-internal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_INCLUDE_STOPPED=false
+      - WATCHTOWER_INCLUDE_RESTARTING=true
+      - WATCHTOWER_NOTIFICATIONS_LEVEL=info
+      - WATCHTOWER_ROLLING_RESTART=true
+      - WATCHTOWER_TIMEOUT=30s
+      - WATCHTOWER_LABEL_ENABLE=true  # Only update labeled containers
+    command: --schedule "0 0 3 * * *"  # Run at 3 AM daily
+
+  ddns-updater:
+    build:
+      context: .
+      dockerfile: ddns-updater/Dockerfile
+    container_name: ddns-updater
+    restart: unless-stopped
+    networks:
+      - omni-internal
+    environment:
+      - DNS_SERVER=${DNS_SERVER:-192.168.1.29}
+      - DNS_ZONE=${DNS_ZONE:-home.usableapps.io}
+      - DNS_TTL=${DNS_TTL:-300}
+      - UPDATE_INTERVAL=${UPDATE_INTERVAL:-60}
+      - DNS_RECORDS=omni:192.168.1.8,omni-k8s:192.168.1.8,omni-siderolink:192.168.1.8,matchbox:192.168.1.8
+    volumes:
+      - ./tsig.key:/run/secrets/tsig.key:ro
+    depends_on:
+      - nginx
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "ddns-updater"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+networks:
+  omni-macvlan:
+    external: true
+    name: omni-macvlan  # Created via create-arch-network.sh
+  omni-internal:
+    driver: bridge
+    internal: false  # Allow internet access for containers
+
+volumes:
+  ssl-certs:
+  letsencrypt-data:
+  omni-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data
+  # External etcd data - THIS is where persistence happens!
+  etcd-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/etcd-data

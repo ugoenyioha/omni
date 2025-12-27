@@ -1,0 +1,42 @@
+# Sensitive files
+omni.asc
+vault-token
+.vault-token
+tsig.key
+role-id
+secret-id
+
+# SSL certificates
+ssl/
+*.crt
+*.key
+*.pem
+
+# Data directories
+data/
+_out/
+
+# Environment files with secrets
+.env.local
+.env.production
+
+# Backup files
+*.bak
+*.backup
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp

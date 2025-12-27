@@ -1,0 +1,24 @@
+# Omni configuration with refresh tokens enabled
+auth:
+  oidc:
+    # Extend token lifetime from 5 minutes to 30 minutes
+    tokenLifetime: 30m
+    # Enable refresh tokens
+    enableRefreshTokens: true
+    # Refresh token lifetime (7 days)
+    refreshTokenLifetime: 168h
+    # Rotate refresh tokens on use for security
+    rotateRefreshTokens: true
+
+# Matchbox PXE boot server configuration
+matchbox:
+  # Enable push-to-matchbox feature
+  enabled: true
+  # Path where kernel and initramfs files are stored
+  assetsPath: /var/lib/matchbox/assets/talos
+  # Path where boot profiles are stored
+  profilesPath: /var/lib/matchbox/profiles
+  # Path where machine groups are stored
+  groupsPath: /var/lib/matchbox/groups
+  # Update existing groups when pushing new profiles
+  updateGroups: true
