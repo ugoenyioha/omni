@@ -225,6 +225,28 @@ export type CreateJoinTokenResponse = {
   id?: string
 }
 
+export type PushToMatchboxRequest = {
+  extensions?: string[]
+  extra_kernel_args?: string[]
+  meta_values?: {[key: number]: string}
+  talos_version?: string
+  media_id?: string
+  secure_boot?: boolean
+  siderolink_grpc_tunnel_mode?: CreateSchematicRequestSiderolinkGRPCTunnelMode
+  join_token?: string
+}
+
+export type PushToMatchboxResponseProgress = {
+  message?: string
+  percentage?: number
+  complete?: boolean
+  error?: string
+}
+
+export type PushToMatchboxResponse = {
+  progress?: PushToMatchboxResponseProgress
+}
+
 export class ManagementService {
   static Kubeconfig(req: KubeconfigRequest, ...options: fm.fetchOption[]): Promise<KubeconfigResponse> {
     return fm.fetchReq<KubeconfigRequest, KubeconfigResponse>("POST", `/management.ManagementService/Kubeconfig`, req, ...options)
@@ -279,5 +301,8 @@ export class ManagementService {
   }
   static CreateJoinToken(req: CreateJoinTokenRequest, ...options: fm.fetchOption[]): Promise<CreateJoinTokenResponse> {
     return fm.fetchReq<CreateJoinTokenRequest, CreateJoinTokenResponse>("POST", `/management.ManagementService/CreateJoinToken`, req, ...options)
+  }
+  static PushToMatchbox(req: PushToMatchboxRequest, entityNotifier?: fm.NotifyStreamEntityArrival<PushToMatchboxResponse>, ...options: fm.fetchOption[]): Promise<void> {
+    return fm.fetchStreamingRequest<PushToMatchboxRequest, PushToMatchboxResponse>("POST", `/management.ManagementService/PushToMatchbox`, req, entityNotifier, ...options)
   }
 }

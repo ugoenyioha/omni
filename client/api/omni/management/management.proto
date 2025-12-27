@@ -238,6 +238,28 @@ message CreateJoinTokenResponse {
   string id = 1;
 }
 
+message PushToMatchboxRequest {
+  // Same fields as CreateSchematicRequest for generating the schematic
+  repeated string extensions = 1;
+  repeated string extra_kernel_args = 2;
+  map<uint32, string> meta_values = 3;
+  string talos_version = 4;
+  string media_id = 5;
+  bool secure_boot = 6;
+  CreateSchematicRequest.SiderolinkGRPCTunnelMode siderolink_grpc_tunnel_mode = 7;
+  string join_token = 8;
+}
+
+message PushToMatchboxResponse {
+  message Progress {
+    string message = 1;
+    int32 percentage = 2;
+    bool complete = 3;
+    string error = 4;
+  }
+  Progress progress = 1;
+}
+
 service ManagementService {
   rpc Kubeconfig(KubeconfigRequest) returns (KubeconfigResponse);
   rpc Talosconfig(TalosconfigRequest) returns (TalosconfigResponse);
@@ -257,4 +279,5 @@ service ManagementService {
   rpc MaintenanceUpgrade(MaintenanceUpgradeRequest) returns (MaintenanceUpgradeResponse);
   rpc GetMachineJoinConfig(GetMachineJoinConfigRequest) returns (GetMachineJoinConfigResponse);
   rpc CreateJoinToken(CreateJoinTokenRequest) returns (CreateJoinTokenResponse);
+  rpc PushToMatchbox(PushToMatchboxRequest) returns (stream PushToMatchboxResponse);
 }

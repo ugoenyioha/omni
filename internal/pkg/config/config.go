@@ -219,6 +219,13 @@ func Default() *Params {
 				Endpoint: ":9988",
 			},
 		},
+		Matchbox: Matchbox{
+			Enabled:      false,
+			AssetsPath:   "/var/lib/matchbox/assets/talos",
+			ProfilesPath: "/var/lib/matchbox/profiles",
+			GroupsPath:   "/var/lib/matchbox/groups",
+			UpdateGroups: false,
+		},
 	}
 }
 
@@ -287,6 +294,7 @@ type Params struct {
 	Registries Registries `yaml:"registries" validate:"required"`
 	Debug      Debug      `yaml:"debug"`
 	Features   Features   `yaml:"features"`
+	Matchbox   Matchbox   `yaml:"matchbox"`
 }
 
 // ValidateState validate Omni params against the current state of Omni instance.
@@ -494,3 +502,17 @@ const (
 	// EtcdBackupTypeFS is the filesystem backup storage type.
 	EtcdBackupTypeFS EtcdBackupStorage = "local"
 )
+
+// Matchbox defines Matchbox PXE boot server configuration.
+type Matchbox struct {
+	// Enabled enables the push-to-matchbox feature.
+	Enabled bool `yaml:"enabled"`
+	// AssetsPath is the path where Matchbox assets (kernels, initramfs) are stored.
+	AssetsPath string `yaml:"assetsPath"`
+	// ProfilesPath is the path where Matchbox profiles are stored.
+	ProfilesPath string `yaml:"profilesPath"`
+	// GroupsPath is the path where Matchbox groups are stored.
+	GroupsPath string `yaml:"groupsPath"`
+	// UpdateGroups controls whether to update existing groups when pushing new profiles.
+	UpdateGroups bool `yaml:"updateGroups"`
+}

@@ -100,6 +100,7 @@ enum Phase {
   Idle = 0,
   Generating = 1,
   Loading = 2,
+  PushingToMatchbox = 3,
 }
 
 const installExtensions = ref<Record<string, boolean>>({})
@@ -114,6 +115,7 @@ const fileSizeLoaded = ref(0)
 const kernelArguments = ref('')
 const creatingSchematic = ref(false)
 const joinToken = ref('')
+const pushProgress = ref('')
 
 let controller: AbortController
 let closed = false
@@ -490,6 +492,56 @@ const copyPxeBootUrl = async () => {
 const downloaded = computed(() => {
   return formatBytes(fileSizeLoaded.value)
 })
+
+const pushToMatchbox = async () => {
+  abortDownload()
+
+  controller = new AbortController()
+
+  if (!installationMedia.value) {
+    return
+  }
+
+  try {
+    phase.value = Phase.PushingToMatchbox
+    pushProgress.value = 'Preparing image for Matchbox...'
+
+    // Use the existing schematicReq computed value
+    const request = schematicReq.value
+
+    // Call the streaming RPC
+    await ManagementService.PushToMatchbox(
+      request,
+      (response: { progress?: { message?: string; percentage?: number; error?: string; complete?: boolean } }) => {
+        // Handle each streaming response
+        if (response.progress) {
+          pushProgress.value = response.progress.message || ''
+          fileSizeLoaded.value = response.progress.percentage || 0
+
+          if (response.progress.error) {
+            throw new Error(response.progress.error)
+          }
+
+          if (response.progress.complete) {
+            showSuccess('Image pushed to Matchbox! Starting local download...')
+            // Trigger local download after brief delay
+            setTimeout(async () => {
+              try {
+                await download()
+              } catch (e) {
+                showError('Download Failed', e.message)
+              }
+            }, 1000)
+          }
+        }
+      },
+    )
+  } catch (e) {
+    showError('Push to Matchbox Failed', e.message)
+    close()
+    phase.value = Phase.Idle
+  }
+}
 </script>
 
 <template>
@@ -507,6 +559,7 @@ const downloaded = computed(() => {
       <div class="flex items-center gap-2">
         <TSpinner class="h-5 w-5" />
         <span v-if="phase === Phase.Loading">{{ downloaded }}</span>
+        <span v-else-if="phase === Phase.PushingToMatchbox">{{ pushProgress }}</span>
         <span v-else>Generating Image</span>
       </div>
     </div>
@@ -603,6 +656,14 @@ const downloaded = computed(() => {
 
       <div class="flex justify-end gap-4">
         <TButton class="h-9 w-32" @click="close">Cancel</TButton>
+        <TButton
+          class="h-9"
+          :disabled="!supported"
+          style="background-color: #ef4444 !important; color: white !important; border: none !important;"
+          @click="pushToMatchbox"
+        >
+          <span style="color: white !important;">Push to Matchbox</span>
+        </TButton>
         <SplitButton
           :actions="['Download', 'Copy image download URL']"
           variant="highlighted"
